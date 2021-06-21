@@ -51,6 +51,9 @@ import Std.Data.HashMap
 open Lean Lean.Meta Lean.Elab Lean.Elab.Tactic
 open Std (HashMap)
 
+def Lean.MessageLog.getErrorMessages (log : MessageLog) : MessageLog :=
+  { msgs := log.msgs.filter fun m => match m.severity with | MessageSeverity.error => true | _ => false }
+
 namespace Gym
 
 abbrev BranchId : Type := Nat
@@ -71,10 +74,9 @@ structure Problem where
   currNamespace : Name          := Name.anonymous
 
 structure Response : Type where
-  branchId : Option Nat    := none
-  state    : Option String := none
-  error    : Option String := none
-  proved   : Bool          := false
+  branchId : Option Nat   := none
+  goals    : Array String := #[]
+  errors   : Array String := #[]
   deriving ToJson
 
 partial def replFor (problem : Problem) : IO Unit := do
@@ -83,14 +85,21 @@ partial def replFor (problem : Problem) : IO Unit := do
     | none       => throwError "decl {problem.decl} not found"
     | some cInfo =>
       if ¬ (← isProp cInfo.type) then throwError "decl {problem.decl} not a theorem"
-      let mvar ← mkFreshExprMVar (some cInfo.type) (kind := MetavarKind.natural)
+      let mvar ← mkFreshExprMVar (some cInfo.type) (kind := MetavarKind.synthetic)
       let termState : Term.SavedState ← Term.saveState
       let tacticState : Tactic.SavedState := { term := termState, tactic := ⟨[mvar.mvarId!]⟩ }
       let context := {}
       let state := { branches := HashMap.empty.insert 0 tacticState, nextId := 1 }
       (welcome *> repl).run context |>.run' state
 
-  let metaM : MetaM Unit := termElabM.run'
+  let termElabCtx : Term.Context := {
+    fileName := "<Gym>",
+    fileMap := { source := "", positions := #[0], lines := #[1] },
+    declName? := some (problem.decl ++ "_gym_"),
+    errToSorry := false
+  }
+
+  let metaM : MetaM Unit := termElabM.run' (ctx := termElabCtx)
   let coreM : CoreM Unit := metaM.run'
 
   let env ← importModules problem.imports {} 0
@@ -107,13 +116,13 @@ where
   ppTacticState (s : Tactic.SavedState) : GymM Format := do
     let mut result : Format := Format.nil
     for goal in s.tactic.goals do
-      result := result ++ (← Meta.ppGoal goal)
+      result := result ++ "\n-----\n" ++ (← Meta.ppGoal goal)
     return result
 
   responseForBranch (id : BranchId) : GymM Response := do
     let some savedState ← pure ((← get).branches.find? id) | throwError "invalid branch id: {id}"
-    if savedState.tactic.goals.isEmpty then pure ({ proved := true } : Response)
-    else pure { branchId := id, state := toString (← ppTacticState savedState) }
+    let goals ← savedState.tactic.goals.mapM fun g => do toString (← Meta.ppGoal g)
+    pure { branchId := id, goals := goals.toArray }
 
   repl : GymM Unit := do
     IO.print "> "
@@ -128,16 +137,23 @@ where
     let some savedState ←  pure ((← get).branches.find? id) | throwError "unknown 'id': {id}"
     let tacticString : String := cmd.toSubstring.drop (pos + 1) |>.toString
     match Parser.runParserCategory (← getEnv) `tactic tacticString "<stdin>" with
-    | Except.error e => pure { error := some e }
-    | Except.ok stx  => do
+    | Except.error err => pure { errors := #[err] }
+    | Except.ok stx    => do
       savedState.term.restore
       let tac : TacticM Unit := set savedState.tactic *> evalTactic stx
       let mvarId : MVarId := savedState.tactic.goals.head!
-      let unsolvedGoals ← Tactic.run mvarId tac
-      let nextId := (← get).nextId
-      let savedState : Tactic.SavedState := { term := (← Term.saveState), tactic := ⟨unsolvedGoals⟩ }
-      modify fun s => { s with branches := s.branches.insert nextId savedState, nextId := nextId + 1 }
-      responseForBranch nextId
+      try
+        let unsolvedGoals ← Tactic.run mvarId tac
+        if (← getThe Term.State).messages.hasErrors then
+          let messages ← (← getThe Term.State).messages.getErrorMessages.toList.toArray
+          pure { errors := ← (messages.map Message.data).mapM fun md => md.toString }
+        else
+          let nextId := (← get).nextId
+          let savedState : Tactic.SavedState := { term := (← Term.saveState), tactic := ⟨unsolvedGoals⟩ }
+          modify fun s => { s with branches := s.branches.insert nextId savedState, nextId := nextId + 1 }
+          responseForBranch nextId
+      catch ex =>
+        pure { errors := #[← ex.toMessageData.toString] }
 
   parseNat (s : String) : GymM Nat :=
     match s.toNat? with
