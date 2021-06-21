@@ -23,12 +23,10 @@ to recompute each path on every action.
 Example (circular) run of `lean-gym Nat.add_comm`:
 
 {"goals": ["⊢ ∀ (n m : Nat), n + m = m + n"], "errors": [], "branchId": 0}
-> 0 intro n m
+> {"runTactic": [0, "intro n m"]}
 {"goals": ["n m : Nat\n⊢ n + m = m + n"], "errors": [], "branchId": 1}
-> 1 rewrite [Nat.add_comm]
-{"goals": ["n m : Nat\n⊢ m + n = m + n"], "errors": [], "branchId": 2}
-> 2 rfl
-{"goals": [], "errors": [], "branchId": 3}
+> {"runTactic": [1, "rw [Nat.add_comm]"]}
+{"goals": [], "errors": [], "branchId": 2}
 -/
 import Lean
 import Std.Data.HashMap
@@ -57,6 +55,11 @@ structure Problem where
   imports       : List Import   := [{ module := `Init : Import }]
   openDecls     : List OpenDecl := []
   currNamespace : Name          := Name.anonymous
+
+inductive Command : Type
+  | runTactic : BranchId → String → Command
+  | discard   : BranchId → Command
+  deriving FromJson
 
 structure Response : Type where
   branchId : Option Nat   := none
@@ -111,16 +114,25 @@ where
 
   repl : GymM Unit := do
     IO.print "> "
-    let cmd : String ← (← IO.getStdin).getLine
-    let response ← processCmd cmd
+    let response ← processCmd (← (← IO.getStdin).getLine)
     println! "{toJson response}"
     repl
 
   processCmd (cmd : String) : GymM Response := do
-    let pos := cmd.find (· == ' ')
-    let id : Nat ← parseNat (cmd.toSubstring.take pos).toString
+    match Json.parse cmd with
+    | Except.error err => pure { errors := #[s!"failed to parse json: {err}"] }
+    | Except.ok cmd    =>
+      match (fromJson? cmd : Except String Command) with
+      | Except.ok (Command.runTactic id tactic) => runTactic id tactic
+      | Except.ok (Command.discard id)          => discard id
+      | Except.error err                        => pure { errors := #[s!"failed to decode json: {err}"] }
+
+  discard (id : BranchId) : GymM Response := do
+    modify fun s => { s with branches := s.branches.erase id }
+    pure {}
+
+  runTactic (id : BranchId) (tacticString : String) : GymM Response := do
     let some savedState ←  pure ((← get).branches.find? id) | throwError "unknown 'id': {id}"
-    let tacticString : String := cmd.toSubstring.drop (pos + 1) |>.toString
     match Parser.runParserCategory (← getEnv) `tactic tacticString "<stdin>" with
     | Except.error err => pure { errors := #[err] }
     | Except.ok stx    => do
