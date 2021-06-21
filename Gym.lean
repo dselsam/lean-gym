@@ -130,7 +130,8 @@ where
     match Parser.runParserCategory (← getEnv) `tactic tacticString "<stdin>" with
     | Except.error e => pure { error := some e }
     | Except.ok stx  => do
-      let tac : TacticM Unit := savedState.restore *> evalTactic stx
+      savedState.term.restore
+      let tac : TacticM Unit := set savedState.tactic *> evalTactic stx
       let mvarId : MVarId := savedState.tactic.goals.head!
       let unsolvedGoals ← Tactic.run mvarId tac
       let nextId := (← get).nextId
