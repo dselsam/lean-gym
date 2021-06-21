@@ -72,7 +72,7 @@ partial def replFor (problem : Problem) : IO Unit := do
       if ¬ (← isProp cInfo.type) then throwError "decl {problem.decl} not a theorem"
       let mvar ← mkFreshExprMVar (some cInfo.type) (kind := MetavarKind.synthetic)
       let termState : Term.SavedState ← Term.saveState
-      let tacticState : Tactic.SavedState := { term := termState, tactic := ⟨[mvar.mvarId!]⟩ }
+      let tacticState : Tactic.SavedState := { term := termState, tactic := { goals := [mvar.mvarId!] }}
       let context := {}
       let state := { branches := HashMap.empty.insert 0 tacticState, nextId := 1 }
       (welcome *> repl).run context |>.run' state
@@ -134,7 +134,7 @@ where
           pure { errors := ← (messages.map Message.data).mapM fun md => md.toString }
         else
           let nextId := (← get).nextId
-          let savedState : Tactic.SavedState := { term := (← Term.saveState), tactic := ⟨unsolvedGoals⟩ }
+          let savedState : Tactic.SavedState := { term := (← Term.saveState), tactic := { goals := unsolvedGoals}}
           modify fun s => { s with branches := s.branches.insert nextId savedState, nextId := nextId + 1 }
           responseForBranch nextId
       catch ex =>
@@ -154,5 +154,6 @@ def main (args : List String) : IO Unit := do
   let some LEAN_PATH ← IO.getEnv "LEAN_PATH" | throw (IO.userError "LEAN_PATH not set")
   initSearchPath LEAN_PATH
   let [decl] ← pure args | throw (IO.userError "usage: lean-gym <decl>")
-  let problem : Gym.Problem := { decl := parseName decl }
+  let decl := parseName decl
+  let problem : Gym.Problem := { decl := decl, currNamespace := decl.getRoot }
   Gym.replFor problem
