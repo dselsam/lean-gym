@@ -22,28 +22,13 @@ to recompute each path on every action.
 
 Example (circular) run of `lean-gym Nat.add_comm`:
 
-{"state": "⊢ ∀ (n m : Nat), n + m = m + n",
- "proved": false,
- "error": null,
- "branchId": 0}
-
-> 0 intros
-
-{"state": "n✝ m✝ : Nat\n⊢ n✝ + m✝ = m✝ + n✝",
- "proved": false,
- "error": null,
- "branchId": 1}
-
+{"goals": ["⊢ ∀ (n m : Nat), n + m = m + n"], "errors": [], "branchId": 0}
+> 0 intro n m
+{"goals": ["n m : Nat\n⊢ n + m = m + n"], "errors": [], "branchId": 1}
 > 1 rewrite [Nat.add_comm]
-
-{"state": "n✝ m✝ : Nat\n⊢ m✝ + n✝ = m✝ + n✝",
- "proved": false,
- "error": null,
- "branchId": 2}
-
+{"goals": ["n m : Nat\n⊢ m + n = m + n"], "errors": [], "branchId": 2}
 > 2 rfl
-
-{"state": null, "proved": true, "error": null, "branchId": null}
+{"goals": [], "errors": [], "branchId": 3}
 -/
 import Lean
 import Std.Data.HashMap
