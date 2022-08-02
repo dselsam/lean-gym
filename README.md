@@ -1,6 +1,6 @@
 # lean-gym
 
-An extremely bare-bones REPL for proving in Lean4.
+An extremely bare-bones REPL for proving in Lean4. Compile as usual with `lake build`. This will produce a `lean-gym` executable in a `build/bin` folder.
 
 Usage: `lean-gym <declName>` will load `Init` and start a proving environment for `declName`
 which expects commands in the form of `<branchId> <tactic-string>`
