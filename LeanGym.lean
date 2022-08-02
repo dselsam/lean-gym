@@ -81,8 +81,6 @@ partial def replFor (problem : Problem) : IO Unit := do
       (welcome *> repl).run context |>.run' state
 
   let termElabCtx : Term.Context := {
-    fileName := "<Gym>",
-    fileMap := { source := "", positions := #[0], lines := #[1] },
     declName? := some (problem.decl ++ "_gym_"),
     errToSorry := false
   }
@@ -91,7 +89,11 @@ partial def replFor (problem : Problem) : IO Unit := do
   let coreM : CoreM Unit := metaM.run'
 
   let env ← importModules problem.imports {} 0
-  let coreCtx   : Core.Context := { currNamespace := problem.currNamespace, openDecls := problem.openDecls }
+  let coreCtx   : Core.Context := { 
+    currNamespace := problem.currNamespace, 
+    openDecls := problem.openDecls,
+    fileName := "<Gym>",
+    fileMap := { source := "", positions := #[0], lines := #[1] } }
   let coreState : Core.State := { env := env }
 
   let ((), _) ← coreM.toIO coreCtx coreState
@@ -101,15 +103,15 @@ where
   welcome : GymM Unit := do
     println! "{toJson (← responseForBranch 0)}"
 
-  ppTacticState (s : Tactic.SavedState) : GymM Format := do
+/-   ppTacticState (s : Tactic.SavedState) : GymM Format := do
     let mut result : Format := Format.nil
     for goal in s.tactic.goals do
       result := result ++ "\n-----\n" ++ (← Meta.ppGoal goal)
-    return result
+    return result -/
 
   responseForBranch (id : BranchId) : GymM Response := do
     let some savedState ← pure ((← get).branches.find? id) | throwError "invalid branch id: {id}"
-    let goals ← savedState.tactic.goals.mapM fun g => do toString (← Meta.ppGoal g)
+    let goals ← savedState.tactic.goals.mapM fun g => do pure $ toString (← Meta.ppGoal g)
     pure { branchId := id, goals := goals.toArray }
 
   repl : GymM Unit := do
@@ -141,8 +143,8 @@ where
       let mvarId : MVarId := savedState.tactic.goals.head!
       try
         let unsolvedGoals ← Tactic.run mvarId tac
-        if (← getThe Term.State).messages.hasErrors then
-          let messages ← (← getThe Term.State).messages.getErrorMessages.toList.toArray
+        if (← getThe Core.State).messages.hasErrors then
+          let messages := (← getThe Core.State).messages.getErrorMessages.toList.toArray
           pure { errors := ← (messages.map Message.data).mapM fun md => md.toString }
         else
           let nextId := (← get).nextId
@@ -152,20 +154,12 @@ where
       catch ex =>
         pure { errors := #[← ex.toMessageData.toString] }
 
-  parseNat (s : String) : GymM Nat :=
+ /-  parseNat (s : String) : GymM Nat :=
     match s.toNat? with
     | some k => pure k
-    | none   => throwError "String '{s}' cannot be converted to Nat"
+    | none   => throwError "String '{s}' cannot be converted to Nat" -/
 
 end Gym
 
 def parseName (n : String) : Lean.Name :=
   (n.splitOn ".").foldl Lean.Name.mkStr Lean.Name.anonymous
-
-def main (args : List String) : IO Unit := do
-  let some LEAN_PATH ← IO.getEnv "LEAN_PATH" | throw (IO.userError "LEAN_PATH not set")
-  initSearchPath LEAN_PATH
-  let [decl] ← pure args | throw (IO.userError "usage: lean-gym <decl>")
-  let decl := parseName decl
-  let problem : Gym.Problem := { decl := decl, currNamespace := decl.getRoot }
-  Gym.replFor problem
