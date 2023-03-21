@@ -80,11 +80,9 @@ partial def replFor (problem : Problem) : IO Unit := do
       let state := { branches := HashMap.empty.insert 0 tacticState, nextId := 1 }
       (welcome *> repl).run context |>.run' state
 
-  let termElabCtx : Term.Context := {
-
-    declName? := some (problem.decl ++ "_gym_"),
-    errToSorry := false
-  }
+  let termElabCtx : Term.Context :=
+  { declName? := some (problem.decl ++ "_gym_"),
+    errToSorry := false }
 
   let metaM : MetaM Unit := termElabM.run' (ctx := termElabCtx)
   let coreM : CoreM Unit := metaM.run'
